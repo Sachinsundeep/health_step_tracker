@@ -39,8 +39,10 @@ android {
 }
 
 kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    android {
+    namespace = "com.example.health_step_tracker"
+    compileSdk = 37
+    ndkVersion = flutter.ndkVersion
     }
 }
 
