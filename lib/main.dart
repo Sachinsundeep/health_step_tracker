@@ -1,122 +1,249 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
+import 'package:pedometer/pedometer.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const HealthTrackerApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class HealthTrackerApp extends StatelessWidget {
+  const HealthTrackerApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      debugShowCheckedModeBanner: false,
+      title: 'Health Step Tracker',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF10B981),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const StepTrackerScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class StepTrackerScreen extends StatefulWidget {
+  const StepTrackerScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<StepTrackerScreen> createState() => _StepTrackerScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _StepTrackerScreenState extends State<StepTrackerScreen> {
+  late Stream<StepCount> _stepCountStream;
+  late Stream<PedestrianStatus> _pedestrianStatusStream;
 
-  void _incrementCounter() {
+  String _status = 'Stationary';
+  int _totalDeviceSteps = 0;
+  int? _initialStepOffset; // Used to track steps taken during the current app session
+  bool _isPermissionGranted = false;
+  String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissionAndInit();
+  }
+
+  Future<void> _requestPermissionAndInit() async {
+    // Android requires Activity Recognition, iOS automatically prompts on first CMPedometer call
+    PermissionStatus status = await Permission.activityRecognition.request();
+
+    if (status.isGranted) {
+      setState(() => _isPermissionGranted = true);
+      _initPedometer();
+    } else if (status.isPermanentlyDenied) {
+      setState(() {
+        _errorMessage = 'Permission permanently denied. Enable it in system settings.';
+      });
+      openAppSettings();
+    } else {
+      setState(() {
+        _errorMessage = 'Physical activity permission is required to track steps.';
+      });
+    }
+  }
+
+  void _initPedometer() {
+    // 1. Hardware Step Counter Stream
+    _stepCountStream = Pedometer.stepCountStream;
+    _stepCountStream.listen(
+      _onStepCount,
+      onError: _onStepCountError,
+      cancelOnError: false,
+    );
+
+    // 2. Movement Status Stream (walking, stopped, unknown)
+    _pedestrianStatusStream = Pedometer.pedestrianStatusStream;
+    _pedestrianStatusStream.listen(
+      _onPedestrianStatusChanged,
+      onError: _onPedestrianStatusError,
+      cancelOnError: false,
+    );
+  }
+
+  void _onStepCount(StepCount event) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _totalDeviceSteps = event.steps;
+
+      // Calculate baseline offset for this session
+      _initialStepOffset ??= event.steps;
+    });
+  }
+
+  void _onPedestrianStatusChanged(PedestrianStatus event) {
+    setState(() {
+      _status = event.status; // 'walking', 'stopped', or 'unknown'
+    });
+  }
+
+  void _onStepCountError(dynamic error) {
+    setState(() {
+      _errorMessage = 'Step Count Sensor Error: $error';
+    });
+  }
+
+  void _onPedestrianStatusError(dynamic error) {
+    setState(() {
+      _status = 'Status unavailable';
+    });
+  }
+
+  void _resetSessionSteps() {
+    setState(() {
+      _initialStepOffset = _totalDeviceSteps;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final sessionSteps = _initialStepOffset != null ? (_totalDeviceSteps - _initialStepOffset!) : 0;
+    final estimatedDistanceM = (sessionSteps * 0.762).toStringAsFixed(1); // 0.762m avg stride
+    final estimatedKcal = (sessionSteps * 0.04).toStringAsFixed(0);
+
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: const Text('Live Pedometer'),
+        centerTitle: true,
       ),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (_errorMessage.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _errorMessage,
+                    style: const TextStyle(color: Colors.redAccent),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+
+              // Pedometer Dial
+              Container(
+                width: 220,
+                height: 220,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _status == 'walking' ? const Color(0xFF10B981) : Colors.grey.shade700,
+                    width: 6,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _status == 'walking' ? Icons.directions_walk : Icons.accessibility_new,
+                      size: 48,
+                      color: _status == 'walking' ? const Color(0xFF10B981) : Colors.grey,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '$sessionSteps',
+                      style: const TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Text(
+                      'SESSION STEPS',
+                      style: TextStyle(
+                        fontSize: 12,
+                        letterSpacing: 1.5,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // Status and Secondary Metrics
+              Chip(
+                avatar: CircleAvatar(
+                  backgroundColor: _status == 'walking' ? Colors.green : Colors.orange,
+                  radius: 5,
+                ),
+                label: Text('Status: ${_status.toUpperCase()}'),
+              ),
+
+              const SizedBox(height: 24),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _MetricTile(label: 'Distance', value: '$estimatedDistanceM m'),
+                  _MetricTile(label: 'Active Burn', value: '$estimatedKcal kcal'),
+                  _MetricTile(label: 'Hardware Total', value: '$_totalDeviceSteps'),
+                ],
+              ),
+
+              const SizedBox(height: 36),
+
+              ElevatedButton.icon(
+                onPressed: _resetSessionSteps,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reset Session Counter'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _MetricTile({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w640)),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
     );
   }
 }
